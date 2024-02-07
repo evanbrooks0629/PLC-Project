@@ -27,11 +27,10 @@ public final class Lexer {
         List<Token> tokens = new ArrayList<Token>();
 
         while (peek(".")) {
-            if (peek("[ \b\n\r\t]")) {
-                chars.advance();
-            } else {
+            if (!match("[ \b\n\r\t]"))
                 tokens.add(lexToken());
-            }
+            else
+                chars.skip();
         }
 
         return tokens;
@@ -46,10 +45,12 @@ public final class Lexer {
      * by {@link #lex()}
      */
     public Token lexToken() {
-        if (peek("[A-Za-z_]"))
+        if (peek("@|[A-Za-z]"))
             return lexIdentifier();
-        else if (peek("[+\\-]", "[0-9]") || peek("[0-9]"))
-            return lexNumber();
+        else if (peek("[0-9]") || peek("[-]", "[1-9]"))
+            return lexInteger();
+        else if (peek("-", "0", "\\."))
+            return lexDecimal();
         else if (peek("'"))
             return lexCharacter();
         else if (peek("\""))
@@ -59,103 +60,86 @@ public final class Lexer {
     }
 
     public Token lexIdentifier() {
-        while (match("@") || match("[A-Za-z0-9]")) {
-            match("[A-Za-z0-9]*");
-
-        }
+        match("@|[A-Za-z]");
+        while (match("[A-Za-z0-9_-]")) {}
         return chars.emit(Token.Type.IDENTIFIER);
     }
 
-    public Token lexNumber() {
-        if (peek("[-]")) {
-            match("[-]");
+    public Token lexInteger() {
+        match("-");
+        if (match("0")) {
+            if (peek("\\.", "[0-9]"))
+                return lexDecimal();
+            else
+                return chars.emit(Token.Type.INTEGER);
         }
-
-        if (peek("0")) {
-            match("0");
-            if (peek("\\d")) {
-                throw new ParseException("Invalid number, leading zeros are not allowed", chars.index);
-            }
-        } else if (peek("[1-9]")) {
-            match("[1-9]");
-            while (peek("\\d")) {
-                match("\\d");
-            }
-        } else {
-            throw new ParseException("Invalid number", chars.index);
-        }
-
-        if (peek("[.]")) {
-            match("[.]");
-            if (!peek("\\d")) {
-                throw new ParseException("Invalid decimal number, missing digit after decimal point", chars.index);
-            }
-            while (peek("\\d")) {
-                match("\\d");
-            }
-            return chars.emit(Token.Type.DECIMAL);
-        }
-
+        match("[1-9]");
+        do {
+            if (peek("\\.", "[0-9]"))
+                return lexDecimal();
+        } while (match("[0-9]"));
         return chars.emit(Token.Type.INTEGER);
     }
 
-    public Token lexCharacter() {
-        if (peek("'"))
-            match("'");
-        if (peek("\\\\"))
-            lexEscape();
-        else if (peek("[^'\b\n\r\t]"))
-            match("[^'\b\n\r\t]");
-        else {
-            throw new ParseException("Illegal Character", chars.index);
+    public Token lexDecimal() {
+        //from lexInteger
+        if (match("\\.")) {
+            while (match("[0-9]")) {}
+            return chars.emit(Token.Type.DECIMAL);
         }
-        if (peek("'")) {
-            match("'");
+        match("-", "0", "\\.");
+        while (match("[0-9]")) {}
+        return chars.emit(Token.Type.DECIMAL);
+    }
+    public Token lexCharacter() {
+        match("'");
+        if (peek("\\\\")) {
+            if (!match("\\\\", "[bnrt'\"\\\\]"))
+                throw new ParseException("Invalid escape sequence", chars.index + 1);
+            if (!match("'"))
+                throw new ParseException("Unterminated char", chars.index);
             return chars.emit(Token.Type.CHARACTER);
         }
-        throw new ParseException("Illegal Character", chars.index);
+        if (!match("[^'\\\\\b\n\r\t]"))
+            throw new ParseException("Illegal Character", chars.index);
+        if (!match("'"))
+            throw new ParseException("Unterminated char", chars.index);
+        return chars.emit(Token.Type.CHARACTER);
+        //maybe distinguish illegal character and missing character but im too lazy.
     }
 
     public Token lexString() {
-        if (!match("\"")) {
-            throw new ParseException("Expected opening quote for string", chars.index);
-        }
-
+        match("\"");
         while (!peek("\"")) {
+            if (peek("[\n\r]"))
+                throw new ParseException("Unterminated string1", chars.index);
             if (peek("\\\\")) {
-                match("\\\\");
-                if (!match("[bnrt'\"\\\\]")) {
-                    throw new ParseException("Invalid escape sequence", chars.index);
+                if (!match("\\\\", "[bnrt'\"\\\\]")) {
+                    throw new ParseException("Invalid escape sequence", chars.index + 1);
+                } else {
+                    continue;
                 }
-            } else if (match("[^\"\n\r\\\\]")) {
+            }
+            if (peek("[^\"\n\r\\\\]")) {
                 match("[^\"\n\r\\\\]");
             } else {
                 throw new ParseException("Invalid string", chars.index);
             }
         }
-
         if (!match("\"")) {
             throw new ParseException("Unterminated string", chars.index);
         }
-
         return chars.emit(Token.Type.STRING);
     }
 
-    public void lexEscape() {
-        if (peek("\\\\", "[bnrt'\"\\\\]"))
-            match("\\\\", "[bnrt'\"\\\\]");
-        else {
-            match(".", ".");
-            throw new ParseException("Illegal Escape", chars.index);
-        }
-    }
-
     public Token lexOperator() {
-        if (peek("[<>!=]", "="))
-            match("[<>!=]", "=");
+        if (match("[<>!=]", "=") ||
+                match("&", "&") ||
+                match("\\|", "\\|") ||
+                match("[^\b\n\r\t]"))
+            return chars.emit(Token.Type.OPERATOR);
         else
-            match(".");
-        return chars.emit(Token.Type.OPERATOR);
+            throw new ParseException("Blank Operator", chars.index);
     }
 
     /**
